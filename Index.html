@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KISAH • Ada Cerita Disetiap Transasksinya</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .glass { backdrop-filter: blur(8px); background: rgba(255,255,255,.7); }
+  .toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background:#111; color:#fff; padding:0.5rem 1rem; border-radius:0.5rem; display:none;}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<!-- Login / Daftar -->
+<section id="page-auth" class="max-w-md mx-auto mt-20 p-6 border rounded shadow-lg">
+  <h2 class="text-xl font-bold mb-4">Masuk / Daftar</h2>
+  <form id="authForm" class="space-y-3">
+    <input id="email" type="email" placeholder="Email" required class="w-full px-3 py-2 border rounded">
+    <input id="password" type="password" placeholder="Password" required class="w-full px-3 py-2 border rounded">
+    <div class="flex gap-2">
+      <button data-action="signup" class="flex-1 bg-blue-500 text-white px-3 py-2 rounded">Daftar</button>
+      <button data-action="signin" class="flex-1 border px-3 py-2 rounded">Masuk</button>
+    </div>
+  </form>
+</section>
+
+<!-- Dashboard -->
+<section id="page-dashboard" class="hidden max-w-7xl mx-auto p-4">
+
+  <div class="flex justify-between items-center mb-4">
+    <h1 class="text-2xl font-bold">Dashboard</h1>
+    <button onclick="doLogout()" class="bg-rose-500 text-white px-3 py-1 rounded">Keluar</button>
+  </div>
+
+  <!-- Form Transaksi -->
+  <div class="mb-4 p-4 border rounded">
+    <h2 class="font-bold mb-2">Tambah Transaksi</h2>
+    <form id="txForm" class="grid grid-cols-2 gap-2">
+      <select id="txKind" class="col-span-2 px-3 py-2 border rounded">
+        <option value="expense">Pengeluaran</option>
+        <option value="income">Pemasukan</option>
+      </select>
+      <input id="txAmount" type="number" step="0.01" placeholder="Jumlah" class="col-span-2 px-3 py-2 border rounded" required>
+      <input id="txDate" type="date" class="col-span-2 px-3 py-2 border rounded" required>
+      <select id="txCategory" class="col-span-2 px-3 py-2 border rounded">
+        <option>Makan</option>
+        <option>Transport</option>
+        <option>Belanja</option>
+        <option>Hutang</option>
+		<option>Gajih</option>
+		<option>Lain-lain</option>
+      </select>
+      <input id="txNote" placeholder="Catatan (opsional)" class="col-span-2 px-3 py-2 border rounded">
+      <button class="col-span-2 bg-blue-500 text-white px-3 py-2 rounded">Simpan</button>
+    </form>
+  </div>
+
+  <!-- Daftar Hutang -->
+  <div class="mb-4 p-4 border rounded">
+    <h2 class="font-bold mb-2">Daftar Hutang</h2>
+    <ul id="debtList" class="space-y-2"></ul>
+  </div>
+
+  <!-- Ringkasan -->
+  <div class="grid grid-cols-4 gap-3 mb-4">
+    <div class="p-4 bg-emerald-50 border rounded">
+      <div>Pemasukan</div>
+      <div id="sumIncome" class="font-bold">Rp0</div>
+    </div>
+    <div class="p-4 bg-rose-50 border rounded">
+      <div>Pengeluaran</div>
+      <div id="sumExpense" class="font-bold">Rp0</div>
+    </div>
+    <div class="p-4 bg-slate-100 border rounded">
+      <div>Saldo</div>
+      <div id="sumBalance" class="font-bold">Rp0</div>
+    </div>
+    <div class="p-4 bg-yellow-50 border rounded">
+      <div>Total Hutang</div>
+      <div id="sumDebt" class="font-bold">Rp0</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="grid lg:grid-cols-2 gap-4 mb-4">
+    <div class="p-4 border rounded">
+      <div>Tren Saldo</div>
+      <canvas id="chartLine" height="120"></canvas>
+    </div>
+    <div class="p-4 border rounded">
+      <div>Komposisi Kategori</div>
+      <canvas id="chartPie" height="120"></canvas>
+    </div>
+  </div>
+
+  <!-- Tabel Transaksi -->
+  <div class="p-4 border rounded">
+    <h2 class="font-bold mb-2">Transaksi</h2>
+    <table class="w-full text-sm border-collapse">
+      <thead>
+        <tr>
+          <th class="border px-2 py-1">Tanggal</th>
+          <th class="border px-2 py-1">Kategori</th>
+          <th class="border px-2 py-1 text-right">Jumlah</th>
+          <th class="border px-2 py-1">Aksi</th>
+        </tr>
+      </thead>
+      <tbody id="txTbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  const USE_SUPABASE = true;
+  const SUPABASE_URL = ""; // ganti
+  const SUPABASE_ANON_KEY = ""; // ganti
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const authForm = document.getElementById("authForm");
+  const txForm = document.getElementById("txForm");
+  const txKind = document.getElementById("txKind");
+  const txAmount = document.getElementById("txAmount");
+  const txDate = document.getElementById("txDate");
+  const txCategory = document.getElementById("txCategory");
+  const txNote = document.getElementById("txNote");
+  const debtList = document.getElementById("debtList");
+  const sumIncome = document.getElementById("sumIncome");
+  const sumExpense = document.getElementById("sumExpense");
+  const sumBalance = document.getElementById("sumBalance");
+  const sumDebt = document.getElementById("sumDebt");
+  const txTbody = document.getElementById("txTbody");
+  const toastEl = document.getElementById("toast");
+
+  let user = null, txList = [], debts = [];
+  let chartLine, chartPie;
+
+  const today = () => new Date().toISOString().slice(0,10);
+  const showToast = msg => { toastEl.textContent=msg; toastEl.style.display='block'; setTimeout(()=>toastEl.style.display='none',1500); };
+
+  authForm.addEventListener("submit", async e=>{
+    e.preventDefault();
+    const email = document.getElementById("email").value;
+    const pw = document.getElementById("password").value;
+    const action = e.submitter.dataset.action;
+
+    try {
+      if(action==="signup"){
+        const { error } = await sb.auth.signUp({ email, password: pw });
+        if(error) throw error;
+        showToast("Daftar berhasil, cek email");
+      } else {
+        const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+        if(error) throw error;
+        user = data.user;
+        afterLogin();
+      }
+    } catch(err){ showToast(err.message); }
+  });
+
+  async function doLogout(){
+    await sb.auth.signOut();
+    user = null;
+    document.getElementById("page-auth").classList.remove("hidden");
+    document.getElementById("page-dashboard").classList.add("hidden");
+  }
+
+  function afterLogin(){
+    document.getElementById("page-auth").classList.add("hidden");
+    document.getElementById("page-dashboard").classList.remove("hidden");
+    txDate.value = today();
+    fetchData();
+  }
+
+  async function fetchData(){
+    const { data: txData } = await sb.from('transactions').select('*').eq('user_id', user.id).order('date', {ascending:true});
+    txList = txData || [];
+    const { data: debtData } = await sb.from('debts').select('*').eq('user_id', user.id);
+    debts = debtData || [];
+    renderAll();
+  }
+
+  txForm.addEventListener("submit", async e=>{
+    e.preventDefault();
+    if(!txAmount.value || !txDate.value) return showToast("Lengkapi data");
+
+    const tx = {
+      user_id: user.id,
+      kind: txKind.value,
+      category: txCategory.value,
+      amount: parseFloat(txAmount.value),
+      date: txDate.value,
+      note: txNote.value
+    };
+
+    if(txCategory.value==="Hutang" && tx.kind==="expense"){
+      await sb.from('debts').insert([{user_id:user.id, amount:tx.amount, date:tx.date, status:"Belum Lunas"}]);
+    } else {
+      await sb.from('transactions').insert([tx]);
+    }
+
+    txForm.reset(); txDate.value=today();
+    fetchData();
+    showToast("Tersimpan");
+  });
+
+  function renderAll(){
+    // Transaksi
+    txTbody.innerHTML = txList.map((t,i)=>`
+      <tr>
+        <td class="border px-2 py-1">${t.date}</td>
+        <td class="border px-2 py-1">${t.category}</td>
+        <td class="border px-2 py-1 text-right">${rupiah(t.kind==='expense'?-t.amount:t.amount)}</td>
+        <td class="border px-2 py-1">
+          <button onclick="deleteTx(${i})" class="px-2 py-1 border rounded">Hapus</button>
+        </td>
+      </tr>
+    `).join('');
+
+    // Hutang
+    debtList.innerHTML = debts.map((d,i)=>`
+      <li>${d.date} - Rp${d.amount} - ${d.status} <button onclick="payDebt(${i})" class="px-2 py-0.5 border rounded text-xs">Bayar</button></li>
+    `).join('');
+
+    // Summary
+    const income = txList.filter(t=>t.kind==='income').reduce((a,b)=>a+b.amount,0);
+    const expense = txList.filter(t=>t.kind==='expense').reduce((a,b)=>a+b.amount,0);
+    sumIncome.textContent = rupiah(income);
+    sumExpense.textContent = rupiah(expense);
+    sumBalance.textContent = rupiah(income-expense);
+    sumDebt.textContent = rupiah(debts.reduce((a,b)=>a+b.amount,0));
+
+    // Charts
+    renderCharts();
+  }
+
+  async function deleteTx(i){
+    const tx = txList[i];
+    await sb.from('transactions').delete().eq('id', tx.id);
+    fetchData();
+    showToast("Dihapus");
+  }
+
+  async function payDebt(i){
+    const d = debts[i];
+    await sb.from('debts').update({status:"Lunas"}).eq('id', d.id);
+    await sb.from('transactions').insert([{user_id:user.id, kind:"expense", category:"Bayar Hutang", amount:d.amount, date:today()}]);
+    fetchData();
+    showToast("Hutang dibayar");
+  }
+
+  function renderCharts(){
+    const ctxLine = document.getElementById('chartLine');
+    const ctxPie = document.getElementById('chartPie');
+
+    const dates = [...new Set(txList.map(t=>t.date))].sort();
+    const balances = dates.map(d=>txList.filter(t=>t.date<=d).reduce((a,b)=>a+(b.kind==='income'?b.amount:-b.amount),0));
+
+    if(chartLine) chartLine.destroy();
+    chartLine = new Chart(ctxLine,{type:'line', data:{labels:dates, datasets:[{label:'Saldo', data:balances, borderColor:'#3b82f6', backgroundColor:'#bfdbfe88', fill:true}]} });
+
+    const catTotals = {};
+    txList.forEach(t=>{ if(t.kind==='expense') catTotals[t.category]=(catTotals[t.category]||0)+t.amount; });
+    if(chartPie) chartPie.destroy();
+    chartPie = new Chart(ctxPie,{type:'pie', data:{labels:Object.keys(catTotals), datasets:[{data:Object.values(catTotals), backgroundColor:['#f87171','#60a5fa','#34d399','#facc15']}]} });
+  }
+
+  function rupiah(n){ return new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(n||0); }
+</script>
+</body>
+</html>
